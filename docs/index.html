@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Status Forge — Optimizador para estados de WhatsApp</title>
 
+<script>
+  if (!crossOriginIsolated && navigator.serviceWorker) {
+    navigator.serviceWorker.register('coi-serviceworker.js').then(() => {
+      window.location.reload();
+    });
+  }
+</script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,800;1,9..144,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -586,6 +594,7 @@ async function loadFFmpeg() {
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
     wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    workerURL: await toBlobURL('https://esm.sh/@ffmpeg/ffmpeg@0.12.10/es2022/worker.js', 'text/javascript'),
   });
   ffmpegLoaded = true;
   addLog('Núcleo cargado.', 'ok');
