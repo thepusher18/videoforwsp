@@ -5,14 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Status Forge — Optimizador para estados de WhatsApp</title>
 
-<script>
-  if (!crossOriginIsolated && navigator.serviceWorker) {
-    navigator.serviceWorker.register('coi-serviceworker.js').then(() => {
-      window.location.reload();
-    });
-  }
-</script>
-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,800;1,9..144,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -531,14 +523,11 @@
   </section>
 
   <footer>
-    Procesado con <a href="https://ffmpegwasm.netlify.app" target="_blank">FFmpeg.wasm</a> · tu video nunca sale de este dispositivo
+    Procesado con <a href="https://ffmpeg.org" target="_blank">FFmpeg</a> en el servidor · el video se elimina al terminar
   </footer>
 </div>
 
-<script type="module">
-import { FFmpeg } from "https://esm.sh/@ffmpeg/ffmpeg@0.12.10";
-import { fetchFile, toBlobURL } from "https://esm.sh/@ffmpeg/util@0.12.1";
-
+<script>
 const $ = (id) => document.getElementById(id);
 const dropzone = $('dropzone');
 const fileInput = $('fileInput');
@@ -549,9 +538,6 @@ const bar = $('bar');
 const log = $('log');
 const statusEl = $('status');
 const statusText = $('statusText');
-
-let ffmpeg = null;
-let ffmpegLoaded = false;
 
 function addLog(msg, cls = '') {
   const line = document.createElement('div');
@@ -576,109 +562,90 @@ function clearError() {
   errorBox.classList.remove('show');
 }
 
-async function loadFFmpeg() {
-  if (ffmpegLoaded) return;
-  addLog('Cargando núcleo FFmpeg (~25MB, solo la primera vez)…');
-  ffmpeg = new FFmpeg();
-
-  ffmpeg.on('log', ({ message }) => {
-    if (message.length < 200) console.log('[ffmpeg]', message);
-  });
-
-  ffmpeg.on('progress', ({ progress }) => {
-    const p = Math.min(99, Math.max(0, progress * 100));
-    setProgress(p, 'CONVIRTIENDO');
-  });
-
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    workerURL: await toBlobURL('https://esm.sh/@ffmpeg/ffmpeg@0.12.10/es2022/worker.js', 'text/javascript'),
-  });
-  ffmpegLoaded = true;
-  addLog('Núcleo cargado.', 'ok');
-}
-
 function fmtBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-async function processVideo(file) {
+function processVideo(file) {
   clearError();
   result.classList.remove('show');
   panel.classList.add('show');
   log.innerHTML = '';
   bar.style.width = '0%';
   statusEl.classList.remove('done');
-  statusText.textContent = 'Inicializando';
+  statusText.textContent = 'Subiendo';
 
   $('filename').textContent = file.name;
   $('filesize').textContent = fmtBytes(file.size);
 
-  try {
-    setProgress(2, 'CARGANDO FFMPEG');
-    await loadFFmpeg();
+  addLog(`Archivo: ${file.name} (${fmtBytes(file.size)})`);
 
-    setProgress(8, 'LEYENDO ARCHIVO');
-    addLog(`Archivo: ${file.name} (${fmtBytes(file.size)})`);
-    const ext = (file.name.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
-    const inputName = 'input' + ext;
-    const outputName = 'output.mp4';
+  const formData = new FormData();
+  formData.append('video', file);
 
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
-    setProgress(12, 'PREPARANDO');
-    addLog('Aplicando perfil para estados de WhatsApp…');
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/convert');
+  xhr.responseType = 'blob';
 
-    // Perfil óptimo para WhatsApp Status:
-    // 720x1280 manteniendo aspecto con padding negro, H.264 high CRF 20,
-    // AAC 128k, +faststart para que WhatsApp no re-escriba el moov atom.
-    await ffmpeg.exec([
-      '-i', inputName,
-      '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1',
-      '-c:v', 'libx264',
-      '-profile:v', 'high',
-      '-level', '4.0',
-      '-preset', 'medium',
-      '-crf', '20',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
-      '-ac', '2',
-      '-movflags', '+faststart',
-      '-r', '30',
-      outputName
-    ]);
+  let progressInterval = null;
 
-    setProgress(99, 'FINALIZANDO');
-    addLog('Conversión completa. Generando archivo…', 'ok');
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = (e.loaded / e.total) * 50;
+      setProgress(pct, 'SUBIENDO');
+    }
+  };
 
-    const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([data.buffer], { type: 'video/mp4' });
-    const url = URL.createObjectURL(blob);
+  xhr.upload.onload = () => {
+    addLog('Archivo recibido. Convirtiendo…', 'ok');
+    statusText.textContent = 'Convirtiendo';
+    let pct = 50;
+    progressInterval = setInterval(() => {
+      pct = Math.min(95, pct + 0.4);
+      setProgress(pct, 'CONVIRTIENDO');
+      if (pct >= 95) clearInterval(progressInterval);
+    }, 400);
+  };
 
-    $('preview').src = url;
-    $('downloadBtn').href = url;
-    $('outSize').textContent = fmtBytes(blob.size);
+  xhr.onload = () => {
+    clearInterval(progressInterval);
+    if (xhr.status === 200) {
+      const blob = xhr.response;
+      const url = URL.createObjectURL(blob);
 
-    setProgress(100, 'COMPLETO');
-    statusEl.classList.add('done');
-    statusText.textContent = 'Hecho';
-    addLog(`Salida: ${fmtBytes(blob.size)} · 720×1280 · H.264/AAC`, 'ok');
+      $('preview').src = url;
+      $('downloadBtn').href = url;
+      $('outSize').textContent = fmtBytes(blob.size);
 
-    try { await ffmpeg.deleteFile(inputName); } catch {}
-    try { await ffmpeg.deleteFile(outputName); } catch {}
+      setProgress(100, 'COMPLETO');
+      statusEl.classList.add('done');
+      statusText.textContent = 'Hecho';
+      addLog(`Listo: ${fmtBytes(blob.size)} · 720×1280 · H.264/AAC`, 'ok');
+      setTimeout(() => result.classList.add('show'), 300);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          showError(data.error || 'Error en el servidor.');
+        } catch {
+          showError('Error en el servidor.');
+        }
+        addLog('Falló la conversión.', 'warn');
+      };
+      reader.readAsText(xhr.response);
+    }
+  };
 
-    setTimeout(() => result.classList.add('show'), 300);
+  xhr.onerror = () => {
+    clearInterval(progressInterval);
+    showError('No se pudo conectar con el servidor. ¿Está corriendo node server.js?');
+    addLog('Error de conexión.', 'warn');
+  };
 
-  } catch (err) {
-    console.error(err);
-    showError(err.message || 'Algo falló durante la conversión.');
-    addLog('Falló la conversión', 'warn');
-  }
+  xhr.send(formData);
 }
 
 fileInput.addEventListener('change', (e) => {

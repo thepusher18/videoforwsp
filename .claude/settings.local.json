@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(http_code *)",
+      "PowerShell(& curl.exe -s -o \"C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Temp\\\\output_test.mp4\" -w \"HTTP_STATUS:%{http_code} SIZE:%{size_download}\" -F \"video=@C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Temp\\\\test_video.mp4\" \"http://localhost:3000/convert\")"
+    ]
+  }
+}
